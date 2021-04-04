@@ -26,18 +26,22 @@ fn main() {
 
     let encoder = encoder::RaptorQEncoder::new(data.clone(), packet_size);
     
-    let packets_per_client = data_size/(3 * packet_size as usize) + 1;
+    // pretend we have three different client streams
     let mut packets = encoder.create_packets(0);
     let mut packets_2 = encoder.create_packets(1);
     let mut packets_3 = encoder.create_packets(2);
-
+    
+    // lose 2/3 of each stream, to simulate receiving partial data from multiple clients
+    let packets_per_client = data_size/(3 * packet_size as usize) + 1;
     packets.truncate(packets_per_client);
     packets_2.truncate(packets_per_client);
     packets_3.truncate(packets_per_client);
 
+    // recombine into single stream
     packets.append(&mut packets_2);
     packets.append(&mut packets_3);
 
+    // recover data
     let recovered_data = decode_packets(&encoder.get_payload_info().config, packets, encoder.get_payload_info().padded_size as u64);
 
     if recovered_data.is_some() {
