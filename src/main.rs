@@ -1,8 +1,9 @@
+mod encoder;
 use rand::Rng;
 use raptorq::{
-    EncodingPacket, ObjectTransmissionInformation, SourceBlockDecoder, SourceBlockEncoder,
+    EncodingPacket, ObjectTransmissionInformation, SourceBlockDecoder,
 };
-mod encoder;
+use encoder::RaptorQEncoder;
 
 fn gen_data(len: usize) -> Vec<u8> {
     let mut data: Vec<u8> = Vec::with_capacity(len);
@@ -24,7 +25,7 @@ fn main() {
 
     let data = gen_data(data_size);
 
-    let encoder = encoder::RaptorQEncoder::new(data.clone(), packet_size);
+    let encoder = RaptorQEncoder::new(data.clone(), packet_size);
     
     // pretend we have three different client streams
     let mut packets = encoder.create_packets(0);
