@@ -25,7 +25,8 @@ fn decode_packets(config: &ObjectTransmissionInformation, packets: Vec<EncodingP
 
 fn main() {
     // RaptorQ is applied to source blocks independently. Assume 1 source block for now.
-    let packet_size = 1280;
+    // data_size % packet_size (symbol_size) should be zero, otherwise library panics. 
+    let packet_size = 1024;
     let data_size: usize = 128 * 1024;
 
     let data = gen_data(data_size);
@@ -48,7 +49,7 @@ fn main() {
     
     // Simulate creating encoded packets from different clients
     let mut packets = get_encoded_packets(&config, &data, 0, 1);
-    let mut packets_2 = get_encoded_packets(&config, &data, 0, 1);
+    let mut packets_2 = get_encoded_packets(&config, &data, 128, 1);
 
     packets.append(&mut packets_2);
 
