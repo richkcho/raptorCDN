@@ -1,5 +1,4 @@
 #[cfg(feature = "serde_support")]
-
 mod encoder;
 use encoder::PayloadInfo;
 use serde::{Deserialize, Serialize};

@@ -25,12 +25,15 @@ fn main() {
 
     let data = gen_data(data_size);
 
-    let encoder = RaptorQEncoder::new(data.clone(), packet_size);
+    let encoder = match RaptorQEncoder::new(data.clone(), packet_size) {
+        Ok(succ) => succ,
+        Err(error) => panic!("Failed to create encoder, error {}", error as u32),
+    };
     
     // pretend we have three different client streams
-    let mut packets = encoder.create_packets(0);
-    let mut packets_2 = encoder.create_packets(1);
-    let mut packets_3 = encoder.create_packets(2);
+    let mut packets = encoder.create_packets(110);
+    let mut packets_2 = encoder.create_packets(13);
+    let mut packets_3 = encoder.create_packets(255);
     
     // lose 2/3 of each stream, to simulate receiving partial data from multiple clients
     let packets_per_client = data_size/(3 * packet_size as usize) + 1;

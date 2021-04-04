@@ -4,6 +4,9 @@ use raptorq::{
     EncodingPacket, ObjectTransmissionInformation, SourceBlockEncoder,
 };
 
+/// Alignment of symbols in memory. 
+const ALIGNMENT: u8 = 8;
+
 /// A representation of a RaptorQEncoder
 pub struct RaptorQEncoder {
     /// RaptorQ configuration object
@@ -14,6 +17,11 @@ pub struct RaptorQEncoder {
     payload_size: usize,
     /// Encoded packet size. Also the symbol size used for RaptorQEncoder. 
     packet_size: u16,
+}
+
+#[derive(Debug)]
+pub enum RaptorQEncoderError {
+    InvalidPacketSize,
 }
 
 /// Information about the payload encoded by a RaptorQEncoder. Needs to be transmitted from the encoder to the decoder. 
@@ -31,7 +39,11 @@ pub struct PayloadInfo {
 impl RaptorQEncoder {
     /// Creates a RaptorQEncoder with a given data payload and packet size
     /// TODO: fix internal assert that packet_size is a multiple of 8 (alignment). 
-    pub fn new(mut data: Vec<u8>, packet_size: u16) -> RaptorQEncoder {
+    pub fn new(mut data: Vec<u8>, packet_size: u16) -> Result<RaptorQEncoder, RaptorQEncoderError> {
+        if packet_size % ALIGNMENT as u16 != 0 {
+            return Err(RaptorQEncoderError::InvalidPacketSize);
+        }
+
         let payload_size = data.len();
 
         // The rust RaptorQ library asserts data length to be a multiple of packet size, pad with zeros.
@@ -54,19 +66,27 @@ impl RaptorQEncoder {
         * Notes:
         * Consider tweaking the sub-block argument. 
         */
-        RaptorQEncoder {
-            config: ObjectTransmissionInformation::new(data.len() as u64, packet_size, 1, 1, 8),
+        return Ok(RaptorQEncoder {
+            config: ObjectTransmissionInformation::new(data.len() as u64, packet_size, 1, 1, ALIGNMENT),
             data: data, 
             payload_size: payload_size,
             packet_size: packet_size,
-        }
+        })
     }
 
     /// Creates packets to transmit. 
     pub fn create_packets(&self, peer_index: u8) -> Vec<EncodingPacket> {
         let encoder = SourceBlockEncoder::new2(1, &self.config, &self.data);
 
-        return encoder.repair_packets((peer_index as usize * self.data.len()) as u32, (self.data.len()/self.packet_size as usize) as u32)
+        let length_in_packets = self.data.len()/self.packet_size as usize;
+
+        // encoding symbol ids must be less than 2^24
+        let mut start_symbol_id = (peer_index as usize * self.data.len()) % (1 << 24);
+        if start_symbol_id > length_in_packets {
+            start_symbol_id -= length_in_packets;
+        }
+
+        return encoder.repair_packets(start_symbol_id as u32, length_in_packets as u32)
     }
 
     /// Gets information about payload required for decoding.
