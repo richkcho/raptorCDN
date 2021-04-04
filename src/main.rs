@@ -44,6 +44,7 @@ fn main() {
      *
      * Notes:
      * In this case, we are transferring 1 source block with all of the data. Sub-block count is chosen to support multiple encoders.
+     * Actually, I have no idea what this sub-block stuff is in relation to the library. 
      */
     let config = ObjectTransmissionInformation::new(data_size as u64, packet_size, 1, 32, 8);
     
