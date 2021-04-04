@@ -26,7 +26,7 @@ fn decode_packets(config: &ObjectTransmissionInformation, packets: Vec<EncodingP
 fn main() {
     // RaptorQ is applied to source blocks independently. Assume 1 source block for now.
     // data_size % packet_size (symbol_size) should be zero, otherwise library panics. 
-    let packet_size = 1024;
+    let packet_size: u16 = 1024;
     let data_size: usize = 128 * 1024;
 
     let data = gen_data(data_size);
@@ -48,8 +48,10 @@ fn main() {
     let config = ObjectTransmissionInformation::new(data_size as u64, packet_size, 1, 32, 8);
     
     // Simulate creating encoded packets from different clients
-    let mut packets = get_encoded_packets(&config, &data, 0, 1);
-    let mut packets_2 = get_encoded_packets(&config, &data, 128, 1);
+    // We want to select packets that haven't been included by another client. (by index)
+    // One way to ensure this is to ask clients to send packets starting from offset of filesize * n for client n. 
+    let mut packets = get_encoded_packets(&config, &data, 0, 64);
+    let mut packets_2 = get_encoded_packets(&config, &data, (data_size/packet_size as usize) as u32, 64);
 
     packets.append(&mut packets_2);
 
@@ -57,6 +59,8 @@ fn main() {
 
     if recovered_data.is_some() {
         println!("Data recovered.");
+        let matching = recovered_data.unwrap().iter().zip(&data).filter(|&(a, b)| a != b).count();
+        println!("Mismatched data count {}", matching);
     } else {
         println!("Data not recovered.");
     }
