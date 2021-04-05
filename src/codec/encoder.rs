@@ -1,19 +1,21 @@
-use raptorq::{EncodingPacket, ObjectTransmissionInformation, SourceBlockEncoder};
 #[cfg(feature = "serde_support")]
 use serde::{Deserialize, Serialize};
+use raptorq::{EncodingPacket, ObjectTransmissionInformation, SourceBlockEncoder};
+use std::cmp;
+use super::consts::*;
 
-/// Alignment of symbols in memory in bytes.
-const ALIGNMENT: u8 = 8;
 
-/// A representation of a RaptorQEncoder
-pub struct RaptorQEncoder {
+/// A representation of a RaptorQBlockEncoder
+pub struct RaptorQBlockEncoder {
     /// RaptorQ configuration object
     config: ObjectTransmissionInformation,
     /// Data to be encoded with the RaptorQ scheme (padded to a multiple of packet_size)
     data: Vec<u8>,
     /// Original size of data before padding.
     payload_size: usize,
-    /// Encoded packet size. Also the symbol size used for RaptorQEncoder.
+    /// Index of this block in overall payload.
+    block_id: u32,
+    /// Encoded packet size. Also the symbol size used for RaptorQBlockEncoder.
     packet_size: u16,
 }
 
@@ -22,24 +24,28 @@ pub enum RaptorQEncoderError {
     /// Packet size provided is not valid. 
     /// TODO: make errors more useful. 
     InvalidPacketSize,
+    DataSizeTooLarge,
 }
 
-/// Information about the payload encoded by a RaptorQEncoder. Needs to be transmitted from the encoder to the decoder.
+/// Information about the payload encoded by a RaptorQBlockEncoder. Needs to be transmitted from the encoder to the decoder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde_support", derive(Serialize, Deserialize))]
-pub struct PayloadInfo {
+pub struct BlockInfo {
     /// Size of payload in data.
     pub payload_size: usize,
     // Actual size of data, including padding.
     pub padded_size: usize,
     /// RaptorQ configuration object
     pub config: ObjectTransmissionInformation,
+    // Index of this block in overall payload. 
+    pub block_id: u32,
 }
 
-impl RaptorQEncoder {
-    /// Creates a RaptorQEncoder with a given data payload and packet size
-    pub fn new(mut data: Vec<u8>, packet_size: u16) -> Result<RaptorQEncoder, RaptorQEncoderError> {
-        if packet_size % ALIGNMENT as u16 != 0 {
+impl RaptorQBlockEncoder {
+    /// Creates a RaptorQBlockEncoder with a given data payload and packet size
+    /// We use packet size == symbol size. 
+    pub fn new(mut data: Vec<u8>, block_id: u32, packet_size: u16) -> Result<RaptorQBlockEncoder, RaptorQEncoderError> {
+        if packet_size % ALIGNMENT as u16 != 0 || packet_size < MIN_PACKET_SIZE {
             return Err(RaptorQEncoderError::InvalidPacketSize);
         }
 
@@ -52,6 +58,14 @@ impl RaptorQEncoder {
                 0,
             );
         }
+
+        let source_block_size_limit = cmp::min(RAPTORQ_MAX_SYMBOLS_IN_BLOCK, SOURCE_BLOCK_SYMBOL_COUNT_LIMIT) * packet_size as usize;
+
+        let max_data_size = source_block_size_limit;
+        if data.len() > max_data_size as usize {
+            return Err(RaptorQEncoderError::DataSizeTooLarge);
+        }
+
         /*
          * ObjectTransmissionInformation is described roughly by the RFC spec:
          * RFC 4.4.1.2:
@@ -67,7 +81,7 @@ impl RaptorQEncoder {
          * Notes:
          * Consider tweaking the sub-block argument.
          */
-        return Ok(RaptorQEncoder {
+        return Ok(RaptorQBlockEncoder {
             config: ObjectTransmissionInformation::new(
                 data.len() as u64,
                 packet_size,
@@ -78,12 +92,13 @@ impl RaptorQEncoder {
             data: data,
             payload_size: payload_size,
             packet_size: packet_size,
+            block_id: block_id,
         });
     }
 
     /// Creates packets to transmit.
     pub fn create_packets(&self, peer_index: u8) -> Vec<EncodingPacket> {
-        let encoder = SourceBlockEncoder::new2(1, &self.config, &self.data);
+        let encoder = SourceBlockEncoder::new2(0, &self.config, &self.data);
 
         let length_in_packets = self.data.len() / self.packet_size as usize;
 
@@ -97,11 +112,12 @@ impl RaptorQEncoder {
     }
 
     /// Gets information about payload required for decoding.
-    pub fn get_payload_info(&self) -> PayloadInfo {
-        return PayloadInfo {
+    pub fn get_payload_info(&self) -> BlockInfo {
+        return BlockInfo {
             payload_size: self.payload_size,
             padded_size: self.data.len(),
             config: self.config,
+            block_id: self.block_id,
         };
     }
 }
@@ -125,7 +141,7 @@ mod tests {
         packets: Vec<EncodingPacket>,
         source_block_length: u64,
     ) -> Option<Vec<u8>> {
-        let mut decoder = SourceBlockDecoder::new2(1, &config, source_block_length);
+        let mut decoder = SourceBlockDecoder::new2(0, &config, source_block_length);
         return decoder.decode(packets);
     }
 
@@ -135,7 +151,7 @@ mod tests {
         let data_size: usize = 128 * 1024;
         let data = gen_data(data_size);
 
-        match RaptorQEncoder::new(data.clone(), packet_size) {
+        match RaptorQBlockEncoder::new(data.clone(), 0, packet_size) {
             Ok(_) => panic!("Should have failed to use packet_size {} with alignment {}", packet_size, ALIGNMENT),
             Err(error) => assert_eq!(error, RaptorQEncoderError::InvalidPacketSize),
         };
@@ -147,7 +163,7 @@ mod tests {
         let data_size: usize = 128 * 1024;
         let data = gen_data(data_size);
 
-        let encoder = match RaptorQEncoder::new(data.clone(), packet_size) {
+        let encoder = match RaptorQBlockEncoder::new(data.clone(), 0, packet_size) {
             Ok(succ) => succ,
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
@@ -176,7 +192,7 @@ mod tests {
         let data_size: usize = 128 * 1024;
         let data = gen_data(data_size);
 
-        let encoder = match RaptorQEncoder::new(data.clone(), packet_size) {
+        let encoder = match RaptorQBlockEncoder::new(data.clone(), 0, packet_size) {
             Ok(succ) => succ,
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
@@ -206,7 +222,7 @@ mod tests {
         let data_size: usize = 128 * 1024;
         let data = gen_data(data_size);
 
-        let encoder = match RaptorQEncoder::new(data.clone(), packet_size) {
+        let encoder = match RaptorQBlockEncoder::new(data.clone(), 0, packet_size) {
             Ok(succ) => succ,
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
