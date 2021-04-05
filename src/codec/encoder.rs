@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use raptorq::{EncodingPacket, ObjectTransmissionInformation, SourceBlockEncoder};
 use std::cmp;
 use super::consts::*;
-
+use rand::{thread_rng, Rng};
 
 /// A representation of a RaptorQBlockEncoder
 pub struct RaptorQBlockEncoder {
@@ -59,7 +59,7 @@ impl RaptorQBlockEncoder {
             );
         }
 
-        let source_block_size_limit = cmp::min(RAPTORQ_MAX_SYMBOLS_IN_BLOCK, SOURCE_BLOCK_SYMBOL_COUNT_LIMIT) * packet_size as usize;
+        let source_block_size_limit = RAPTORQ_MAX_SYMBOLS_IN_BLOCK * packet_size as usize;
 
         let max_data_size = source_block_size_limit;
         if data.len() > max_data_size as usize {
@@ -97,18 +97,22 @@ impl RaptorQBlockEncoder {
     }
 
     /// Creates packets to transmit.
-    pub fn create_packets(&self, peer_index: u8) -> Vec<EncodingPacket> {
+    pub fn create_packets(&self) -> Vec<EncodingPacket> {
         let encoder = SourceBlockEncoder::new2(0, &self.config, &self.data);
+        let packets_to_send = self.data.len() / self.packet_size as usize;
+        let mut packets :Vec<EncodingPacket> = Vec::new();
 
-        let length_in_packets = self.data.len() / self.packet_size as usize;
+        let start_index = thread_rng().gen_range(0..RAPTORQ_ENCODING_SYMBOL_ID_MAX);
 
-        // encoding symbol ids must be less than 2^24
-        let mut start_symbol_id = (peer_index as usize * self.data.len()) % (1 << 24);
-        if start_symbol_id > length_in_packets {
-            start_symbol_id -= length_in_packets;
+        
+        let packets_created = cmp::min(RAPTORQ_ENCODING_SYMBOL_ID_MAX - start_index, packets_to_send);
+        packets.append(&mut encoder.repair_packets(start_index as u32, packets_created as u32));
+
+        if packets_created < packets_to_send {
+            packets.append(&mut encoder.repair_packets(0, (packets_to_send - packets_created) as u32))
         }
 
-        return encoder.repair_packets(start_symbol_id as u32, length_in_packets as u32);
+        return packets;
     }
 
     /// Gets information about payload required for decoding.
@@ -167,7 +171,7 @@ mod tests {
             Ok(succ) => succ,
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
-        let packets = encoder.create_packets(0);
+        let packets = encoder.create_packets();
 
         let recovered_data = decode_packets(
             &encoder.get_payload_info().config,
@@ -196,8 +200,8 @@ mod tests {
             Ok(succ) => succ,
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
-        println!("Using random peer {}", data[0]);
-        let packets = encoder.create_packets(data[0]);
+
+        let packets = encoder.create_packets();
 
         let recovered_data = decode_packets(
             &encoder.get_payload_info().config,
@@ -227,9 +231,9 @@ mod tests {
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
         // pretend we have three different client streams
-        let mut packets = encoder.create_packets(110);
-        let mut packets_2 = encoder.create_packets(13);
-        let mut packets_3 = encoder.create_packets(255);
+        let mut packets = encoder.create_packets();
+        let mut packets_2 = encoder.create_packets();
+        let mut packets_3 = encoder.create_packets();
 
         // lose 2/3 of each stream, to simulate receiving partial data from multiple clients
         let packets_per_client = data_size / (3 * packet_size as usize) + 1;
