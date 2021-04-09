@@ -230,9 +230,9 @@ mod tests {
             Ok(succ) => succ,
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
-        let packets = encoder.generate_encoded_blocks();
+        let blocks = encoder.generate_encoded_blocks();
         
-        match BlockDecoder::decode_data(encoder.get_block_info(), packets) {
+        match BlockDecoder::decode_data(&encoder.get_block_info(), blocks) {
             Ok(recovered_data) => assert_eq!(arr_eq(&recovered_data, &data), true),
             Err(error) => panic!("Failed to decode data, err {}", error as u32),
         }
@@ -249,22 +249,22 @@ mod tests {
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
         // pretend we have three different client streams
-        let mut packets = encoder.generate_encoded_blocks();
-        let mut packets_2 = encoder.generate_encoded_blocks();
-        let mut packets_3 = encoder.generate_encoded_blocks();
+        let mut blocks = encoder.generate_encoded_blocks();
+        let mut blocks_2 = encoder.generate_encoded_blocks();
+        let mut blocks_3 = encoder.generate_encoded_blocks();
         
         // lose 2/3 of each stream, to simulate receiving partial data from multiple clients
         let packets_per_client = data_size / (3 * packet_size as usize) + 1;
-        packets.truncate(packets_per_client);
-        packets_2.truncate(packets_per_client);
-        packets_3.truncate(packets_per_client);
+        blocks.truncate(packets_per_client);
+        blocks_2.truncate(packets_per_client);
+        blocks_3.truncate(packets_per_client);
         
         // recombine into single stream
-        packets.append(&mut packets_2);
-        packets.append(&mut packets_3);
+        blocks.append(&mut blocks_2);
+        blocks.append(&mut blocks_3);
         
         // recover data
-        match BlockDecoder::decode_data(encoder.get_block_info(), packets) {
+        match BlockDecoder::decode_data(&encoder.get_block_info(), blocks) {
             Ok(recovered_data) => assert_eq!(arr_eq(&recovered_data, &data), true),
             Err(error) => panic!("Failed to decode data, err {}", error as u32),
         }
@@ -288,16 +288,16 @@ mod tests {
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
 
-        let mut packets_total = encoder.generate_encoded_blocks();
+        let mut blocks_total = encoder.generate_encoded_blocks();
         let block_info_vec = encoder.get_block_info_vec();
 
         let mut start_index: usize = 0;
         for block_info in block_info_vec.iter() {
             assert_eq!(block_info.padded_size, block_info.payload_size);
-            let (drained, rest): (Vec<EncodedBlock>, Vec<EncodedBlock>) = packets_total.into_iter().partition(|x| x.block_id == block_info.block_id);
-            packets_total = rest;
+            let (drained, rest): (Vec<EncodedBlock>, Vec<EncodedBlock>) = blocks_total.into_iter().partition(|x| x.block_id == block_info.block_id);
+            blocks_total = rest;
 
-            match BlockDecoder::decode_data(block_info.clone(), drained) {
+            match BlockDecoder::decode_data(&block_info, drained) {
                 Ok(recovered_data) => assert_eq!(arr_eq(&recovered_data, &data[start_index..(start_index + block_info.padded_size)]), true),
                 Err(error) => panic!("Failed to decode data, err {}", error as u32),
             }
@@ -305,6 +305,6 @@ mod tests {
             start_index += block_info.padded_size;
         }
         
-        assert_eq!(packets_total.len(), 0);
+        assert_eq!(blocks_total.len(), 0);
     }
 }
