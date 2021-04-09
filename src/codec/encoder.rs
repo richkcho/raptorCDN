@@ -5,18 +5,42 @@ use std::cmp;
 use super::consts::*;
 use rand::{thread_rng, Rng};
 
-/// A representation of a RaptorQBlockEncoder
-pub struct RaptorQBlockEncoder {
-    /// RaptorQ configuration object
-    config: ObjectTransmissionInformation,
-    /// Data to be encoded with the RaptorQ scheme (padded to a multiple of packet_size)
-    data: Vec<u8>,
-    /// Original size of data before padding.
-    payload_size: usize,
-    /// Index of this block in overall payload.
-    block_id: u32,
-    /// Encoded packet size. Also the symbol size used for RaptorQBlockEncoder.
+pub struct RaptorQEncoder {
+    data_size: usize,
     packet_size: u16,
+    block_encoders: Vec<BlockEncoder>,
+}
+
+impl RaptorQEncoder {
+    pub fn new(data: &[u8], packet_size: u16) -> Result<RaptorQEncoder, RaptorQEncoderError> {
+        let block_size = RAPTORQ_MAX_SYMBOLS_IN_BLOCK * packet_size as usize;
+
+        let data_chunks: Vec<Vec<u8>> = data.chunks(block_size).map(|x| x.to_vec()).collect();
+
+        // create block encoders
+        let mut block_encoders: Vec<BlockEncoder> = Vec::new();
+        for (i, data_chunk) in data_chunks.iter().enumerate() {
+            match BlockEncoder::new(i as u32, packet_size, data_chunk.to_vec()) {
+                Ok(block_encoder) => block_encoders.push(block_encoder),
+                Err(error) => return Err(error),
+            }
+        }
+        return Ok(RaptorQEncoder {
+            data_size: data.len(),
+            packet_size: packet_size,
+            block_encoders: block_encoders,
+        });
+    }
+
+    pub fn generate_encoded_blocks(&self) -> Vec<EncodedBlock> {
+        let mut blocks: Vec<EncodedBlock> = Vec::new();
+
+        for block_encoder in self.block_encoders.iter() {
+            blocks.append(&mut block_encoder.generate_encoded_blocks());
+        }
+
+        return blocks;
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,7 +51,14 @@ pub enum RaptorQEncoderError {
     DataSizeTooLarge,
 }
 
-/// Information about the payload encoded by a RaptorQBlockEncoder. Needs to be transmitted from the encoder to the decoder.
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde_support", derive(Serialize, Deserialize))]
+pub struct EncodedBlock {
+    pub block_id: u32,
+    pub data: EncodingPacket,
+}
+
+/// Information about the payload encoded by a BlockEncoder. Needs to be transmitted from the encoder to the decoder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde_support", derive(Serialize, Deserialize))]
 pub struct BlockInfo {
@@ -41,10 +72,24 @@ pub struct BlockInfo {
     pub block_id: u32,
 }
 
-impl RaptorQBlockEncoder {
-    /// Creates a RaptorQBlockEncoder with a given data payload and packet size
+/// A representation of a BlockEncoder
+pub struct BlockEncoder {
+    /// RaptorQ configuration object
+    config: ObjectTransmissionInformation,
+    /// Data to be encoded with the RaptorQ scheme (padded to a multiple of packet_size)
+    data: Vec<u8>,
+    /// Original size of data before padding.
+    payload_size: usize,
+    /// Index of this block in overall payload.
+    block_id: u32,
+    /// Encoded packet size. Also the symbol size used for BlockEncoder.
+    packet_size: u16,
+}
+
+impl BlockEncoder {
+    /// Creates a BlockEncoder with a given data payload and packet size
     /// We use packet size == symbol size. 
-    pub fn new(mut data: Vec<u8>, block_id: u32, packet_size: u16) -> Result<RaptorQBlockEncoder, RaptorQEncoderError> {
+    pub fn new(block_id: u32, packet_size: u16, mut data: Vec<u8>) -> Result<BlockEncoder, RaptorQEncoderError> {
         if packet_size % ALIGNMENT as u16 != 0 || packet_size < MIN_PACKET_SIZE {
             return Err(RaptorQEncoderError::InvalidPacketSize);
         }
@@ -81,7 +126,7 @@ impl RaptorQBlockEncoder {
          * Notes:
          * Consider tweaking the sub-block argument.
          */
-        return Ok(RaptorQBlockEncoder {
+        return Ok(BlockEncoder {
             config: ObjectTransmissionInformation::new(
                 data.len() as u64,
                 packet_size,
@@ -96,27 +141,42 @@ impl RaptorQBlockEncoder {
         });
     }
 
-    /// Creates packets to transmit.
-    pub fn create_packets(&self) -> Vec<EncodingPacket> {
-        let encoder = SourceBlockEncoder::new2(0, &self.config, &self.data);
-        let packets_to_send = self.data.len() / self.packet_size as usize;
-        let mut packets :Vec<EncodingPacket> = Vec::new();
+    fn add_packets(blocks:&mut Vec<EncodedBlock>, mut packets: Vec<EncodingPacket>, block_id: u32) {
+        while match packets.pop() {
+            None => false,
+            Some(packet) => {
+                blocks.push(EncodedBlock{block_id: block_id, data: packet});
+                true
+            },
+        } {}
+    }
+
+    /// static method for encoding data
+    pub(crate) fn encode_data(config: &ObjectTransmissionInformation, data: &[u8], packet_size: u16, block_id: u32) -> Vec<EncodedBlock> {
+        let encoder = SourceBlockEncoder::new2(0, config, data);
+        let packets_to_send = data.len() / packet_size as usize;
+        let mut blocks :Vec<EncodedBlock> = Vec::new();
 
         let start_index = thread_rng().gen_range(0..RAPTORQ_ENCODING_SYMBOL_ID_MAX);
-
         
         let packets_created = cmp::min(RAPTORQ_ENCODING_SYMBOL_ID_MAX - start_index, packets_to_send);
-        packets.append(&mut encoder.repair_packets(start_index as u32, packets_created as u32));
+
+        BlockEncoder::add_packets(&mut blocks, encoder.repair_packets(start_index as u32, packets_created as u32), block_id);
 
         if packets_created < packets_to_send {
-            packets.append(&mut encoder.repair_packets(0, (packets_to_send - packets_created) as u32))
+            BlockEncoder::add_packets(&mut blocks, encoder.repair_packets(0, (packets_to_send - packets_created) as u32), block_id);
         }
 
-        return packets;
+        return blocks;
+    }
+
+    /// Creates packets to transmit.
+    pub fn generate_encoded_blocks(&self) -> Vec<EncodedBlock> {
+        return BlockEncoder::encode_data(&self.config, &self.data, self.packet_size, self.block_id);
     }
 
     /// Gets information about payload required for decoding.
-    pub fn get_payload_info(&self) -> BlockInfo {
+    pub fn get_block_info(&self) -> BlockInfo {
         return BlockInfo {
             payload_size: self.payload_size,
             padded_size: self.data.len(),
@@ -127,10 +187,10 @@ impl RaptorQBlockEncoder {
 }
 
 #[cfg(test)]
+use super::decoder::*;
 mod tests {
     use super::*;
     use rand::Rng;
-    use raptorq::SourceBlockDecoder;
 
     fn gen_data(len: usize) -> Vec<u8> {
         let mut data: Vec<u8> = Vec::with_capacity(len);
@@ -139,14 +199,9 @@ mod tests {
         }
         return data;
     }
-
-    fn decode_packets(
-        config: &ObjectTransmissionInformation,
-        packets: Vec<EncodingPacket>,
-        source_block_length: u64,
-    ) -> Option<Vec<u8>> {
-        let mut decoder = SourceBlockDecoder::new2(0, &config, source_block_length);
-        return decoder.decode(packets);
+    
+    fn arr_eq(data1: &[u8], data2: &[u8]) -> bool {
+        return data1.iter().zip(data2.iter()).all(|(a,b)| a == b);
     }
 
     #[test]
@@ -154,111 +209,60 @@ mod tests {
         let packet_size: u16 = 1337;
         let data_size: usize = 128 * 1024;
         let data = gen_data(data_size);
-
-        match RaptorQBlockEncoder::new(data.clone(), 0, packet_size) {
+        
+        match BlockEncoder::new(0, packet_size, data.clone()) {
             Ok(_) => panic!("Should have failed to use packet_size {} with alignment {}", packet_size, ALIGNMENT),
             Err(error) => assert_eq!(error, RaptorQEncoderError::InvalidPacketSize),
         };
     }
-
+    
     #[test]
-    fn test_encoder_single_client_peer_0() {
+    fn test_encoder_single_client() {
         let packet_size: u16 = 1280;
         let data_size: usize = 128 * 1024;
         let data = gen_data(data_size);
-
-        let encoder = match RaptorQBlockEncoder::new(data.clone(), 0, packet_size) {
+        
+        let encoder = match BlockEncoder::new(0, packet_size, data.clone()) {
             Ok(succ) => succ,
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
-        let packets = encoder.create_packets();
-
-        let recovered_data = decode_packets(
-            &encoder.get_payload_info().config,
-            packets,
-            encoder.get_payload_info().padded_size as u64,
-        );
-
-        assert_eq!(recovered_data.is_some(), true);
-
-        let errors = recovered_data
-            .unwrap()
-            .iter()
-            .zip(&data)
-            .filter(|&(a, b)| a != b)
-            .count();
-        assert_eq!(errors, 0);
+        let packets = encoder.generate_encoded_blocks();
+        
+        match BlockDecoder::decode_data(encoder.get_block_info(), packets) {
+            Ok(recovered_data) => assert_eq!(arr_eq(&recovered_data, &data), true),
+            Err(error) => panic!("Failed to decode data, err {}", error as u32),
+        }
     }
-
-    #[test]
-    fn test_encoder_single_client_random_peer() {
-        let packet_size: u16 = 1280;
-        let data_size: usize = 128 * 1024;
-        let data = gen_data(data_size);
-
-        let encoder = match RaptorQBlockEncoder::new(data.clone(), 0, packet_size) {
-            Ok(succ) => succ,
-            Err(error) => panic!("Failed to create encoder, error {}", error as u32),
-        };
-
-        let packets = encoder.create_packets();
-
-        let recovered_data = decode_packets(
-            &encoder.get_payload_info().config,
-            packets,
-            encoder.get_payload_info().padded_size as u64,
-        );
-
-        assert_eq!(recovered_data.is_some(), true);
-
-        let errors = recovered_data
-            .unwrap()
-            .iter()
-            .zip(&data)
-            .filter(|&(a, b)| a != b)
-            .count();
-        assert_eq!(errors, 0);
-    }
-
+    
     #[test]
     fn test_encoder_multiple_peers() {
         let packet_size: u16 = 1280;
         let data_size: usize = 128 * 1024;
         let data = gen_data(data_size);
-
-        let encoder = match RaptorQBlockEncoder::new(data.clone(), 0, packet_size) {
+        
+        let encoder = match BlockEncoder::new(0, packet_size, data.clone()) {
             Ok(succ) => succ,
             Err(error) => panic!("Failed to create encoder, error {}", error as u32),
         };
         // pretend we have three different client streams
-        let mut packets = encoder.create_packets();
-        let mut packets_2 = encoder.create_packets();
-        let mut packets_3 = encoder.create_packets();
-
+        let mut packets = encoder.generate_encoded_blocks();
+        let mut packets_2 = encoder.generate_encoded_blocks();
+        let mut packets_3 = encoder.generate_encoded_blocks();
+        
         // lose 2/3 of each stream, to simulate receiving partial data from multiple clients
         let packets_per_client = data_size / (3 * packet_size as usize) + 1;
         packets.truncate(packets_per_client);
         packets_2.truncate(packets_per_client);
         packets_3.truncate(packets_per_client);
-
+        
         // recombine into single stream
         packets.append(&mut packets_2);
         packets.append(&mut packets_3);
-
+        
         // recover data
-        let recovered_data = decode_packets(
-            &encoder.get_payload_info().config,
-            packets,
-            encoder.get_payload_info().padded_size as u64,
-        );
-        assert_eq!(recovered_data.is_some(), true);
-
-        let errors = recovered_data
-            .unwrap()
-            .iter()
-            .zip(&data)
-            .filter(|&(a, b)| a != b)
-            .count();
-        assert_eq!(errors, 0);
+        match BlockDecoder::decode_data(encoder.get_block_info(), packets) {
+            Ok(recovered_data) => assert_eq!(arr_eq(&recovered_data, &data), true),
+            Err(error) => panic!("Failed to decode data, err {}", error as u32),
+        }
     }
 }
