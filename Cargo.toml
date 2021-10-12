@@ -9,6 +9,5 @@ edition = "2018"
 [dependencies]
 raptorq = "1.6"
 rand = "0.8"
-futures = "0.3"
-rayon = "1.5"
+tokio-rayon = "2.1.0"
 num-format = "0.4"

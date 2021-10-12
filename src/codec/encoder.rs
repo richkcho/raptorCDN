@@ -4,7 +4,6 @@ use raptorq::{EncodingPacket, ObjectTransmissionInformation, SourceBlockEncoder,
 use std::cmp;
 use super::consts::*;
 use rand::{thread_rng, Rng};
-use parallel_stream::prelude::*;
 
 pub struct RaptorQEncoder {
     data_size: usize,
