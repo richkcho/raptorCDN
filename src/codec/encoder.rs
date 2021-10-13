@@ -224,7 +224,7 @@ mod tests {
     }
     
     #[test]
-    fn test_block_encoder_single_client() {
+    fn test_block_encoder_single_peer() {
         let packet_size: u16 = 1280;
         let data_size: usize = 128 * 1024;
         let data = gen_data(data_size);
@@ -272,44 +272,4 @@ mod tests {
             Err(error) => panic!("Failed to decode data, err {}", error as u32),
         }
     }
-
-    // this test should be run with --release, due to raptorq performance. 
-    // #[cfg(not(debug_assertions))]
-    // #[test]
-    // fn test_encoder_single_peer() {
-    //     let packet_size: u16 = 32768;
-    //     let num_blocks: usize = 3;
-    //     let data_size: usize = RAPTORQ_MAX_SYMBOLS_IN_BLOCK * packet_size as usize * num_blocks;
-
-    //     println!("data size {}", data_size);
-
-    //     // for this test to work, we expect NO PADDING!
-    //     assert_eq!(data_size % packet_size as usize, 0);
-
-    //     let data = gen_data(data_size);
-
-    //     let encoder = match RaptorQEncoder::new(packet_size, &data) {
-    //         Ok(succ) => succ,
-    //         Err(error) => panic!("Failed to create encoder, error {}", error as u32),
-    //     };
-
-    //     let mut blocks_total = encoder.generate_encoded_blocks();
-    //     let block_info_vec = encoder.get_block_info_vec();
-
-    //     let mut start_index: usize = 0;
-    //     for block_info in block_info_vec.iter() {
-    //         assert_eq!(block_info.padded_size, block_info.payload_size);
-    //         let (drained, rest): (Vec<EncodedBlock>, Vec<EncodedBlock>) = blocks_total.into_iter().partition(|x| x.block_id == block_info.block_id);
-    //         blocks_total = rest;
-
-    //         match BlockDecoder::decode_data(&block_info, drained) {
-    //             Ok(recovered_data) => assert_eq!(arr_eq(&recovered_data, &data[start_index..(start_index + block_info.padded_size)]), true),
-    //             Err(error) => panic!("Failed to decode data, err {}", error as u32),
-    //         }
-
-    //         start_index += block_info.padded_size;
-    //     }
-        
-    //     assert_eq!(blocks_total.len(), 0);
-    // }
 }
