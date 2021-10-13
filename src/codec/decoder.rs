@@ -23,39 +23,6 @@ pub struct RaptorQDecoder {
     blocks: Vec<Vec<EncodedBlock>>,
 }
 
-impl RaptorQDecoder {
-    pub fn new(block_info_vec: Vec<BlockInfo>) -> Result<RaptorQDecoder, RaptorQDecoderError> {
-        let mut expected_ids: Vec<bool> = Vec::with_capacity(block_info_vec.len());
-        for block_info in block_info_vec.iter() {
-            if expected_ids[block_info.block_id as usize] {
-                return Err(RaptorQDecoderError::BadBlockInfo);
-            }
-
-            expected_ids[block_info.block_id as usize] = true;
-        }
-
-        if expected_ids.iter().all(|x| !*x) {
-            return Err(RaptorQDecoderError::BadBlockInfo);
-        }
-
-        return Ok(RaptorQDecoder{block_info_vec: block_info_vec, blocks: Vec::with_capacity(expected_ids.len())});
-    }
-
-    /// consume some blocks into the decoder, report back how many blocks have been consumed
-    pub fn add_blocks(&mut self, mut blocks: Vec<EncodedBlock>) -> usize {
-        loop {
-            match blocks.pop() {
-                Some(block) => {
-                    if (block.block_id as usize) < blocks.len() {
-                        self.blocks[block.block_id as usize].push(block);
-                    }
-                },
-                None => break 42,
-            }
-        }
-    }
-}
-
 /// A representation of a BlockDecoder
 pub struct BlockDecoder {
     /// Block metadata
