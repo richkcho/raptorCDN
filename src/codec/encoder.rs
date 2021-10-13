@@ -1,9 +1,10 @@
 #[cfg(feature = "serde_support")]
 use serde::{Deserialize, Serialize};
-use raptorq::{EncodingPacket, ObjectTransmissionInformation, SourceBlockEncoder};
+use raptorq::{EncodingPacket, ObjectTransmissionInformation, SourceBlockEncoder, SourceBlockEncodingPlan};
 use std::cmp;
 use super::consts::*;
 use rand::{thread_rng, Rng};
+use rayon::prelude::*;
 
 pub struct RaptorQEncoder {
     data_size: usize,
@@ -11,39 +12,36 @@ pub struct RaptorQEncoder {
     block_encoders: Vec<BlockEncoder>,
 }
 
+/// RaptorQ data encoder. 
 impl RaptorQEncoder {
     pub fn new(packet_size: u16, data: &[u8]) -> Result<RaptorQEncoder, RaptorQEncoderError> {
-        let block_size = RAPTORQ_MAX_SYMBOLS_IN_BLOCK * packet_size as usize;
+        let block_size = MAX_SYMBOLS_IN_BLOCK * packet_size as usize;
 
         let data_chunks: Vec<Vec<u8>> = data.chunks(block_size).map(|x| x.to_vec()).collect();
 
-        // create block encoders
-        let mut block_encoders: Vec<BlockEncoder> = Vec::new();
-        for (i, data_chunk) in data_chunks.iter().enumerate() {
-            match BlockEncoder::new(i as u32, packet_size, data_chunk.to_vec()) {
-                Ok(block_encoder) => block_encoders.push(block_encoder),
-                Err(error) => return Err(error),
-            }
-        }
-        return Ok(RaptorQEncoder {
-            data_size: data.len(),
-            packet_size: packet_size,
-            block_encoders: block_encoders,
-        });
+        let encoder_results: Result<Vec<BlockEncoder>, RaptorQEncoderError> = data_chunks.par_iter().enumerate().map(|(i, data_chunk)| BlockEncoder::new(i as u32, packet_size, data_chunk.to_vec())).collect();
+
+        match encoder_results {
+            Ok(block_encoders) =>
+                return Ok(RaptorQEncoder {
+                data_size: data.len(),
+                packet_size: packet_size,
+                block_encoders: block_encoders,
+            }),
+            Err(error) => return Err(error),
+        };
     }
 
     pub fn generate_encoded_blocks(&self) -> Vec<EncodedBlock> {
-        let mut blocks: Vec<EncodedBlock> = Vec::new();
-
-        for block_encoder in self.block_encoders.iter() {
-            blocks.append(&mut block_encoder.generate_encoded_blocks());
-        }
-
-        return blocks;
+        return self.block_encoders.par_iter().map(|encoder| encoder.generate_encoded_blocks()).flatten().collect();
     }
 
     pub fn get_block_info_vec(&self) -> Vec<BlockInfo> {
-        return self.block_encoders.iter().map(|x| x.get_block_info()).collect();
+        return self.block_encoders.par_iter().map(|x| x.get_block_info()).collect();
+    }
+
+    pub fn mark_block_done(&self) {
+
     }
 }
 
@@ -88,6 +86,9 @@ pub struct BlockEncoder {
     block_id: u32,
     /// Encoded packet size. Also the symbol size used for BlockEncoder.
     packet_size: u16,
+    /// Encoding plan - helps for small RAPTORQ_MAX_SYMBOLS_IN_BLOCK values.
+    /// TODO: validate with real data. 
+    encoding_plan: SourceBlockEncodingPlan,
 }
 
 impl BlockEncoder {
@@ -108,12 +109,13 @@ impl BlockEncoder {
             );
         }
 
-        let source_block_size_limit = RAPTORQ_MAX_SYMBOLS_IN_BLOCK * packet_size as usize;
+        let num_symbols = data.len() / packet_size as usize;
 
-        let max_data_size = source_block_size_limit;
-        if data.len() > max_data_size as usize {
+        if num_symbols > MAX_SYMBOLS_IN_BLOCK {
             return Err(RaptorQEncoderError::DataSizeTooLarge);
         }
+
+        let plan = SourceBlockEncodingPlan::generate(num_symbols as u16);
 
         /*
          * ObjectTransmissionInformation is described roughly by the RFC spec:
@@ -142,6 +144,7 @@ impl BlockEncoder {
             payload_size: payload_size,
             packet_size: packet_size,
             block_id: block_id,
+            encoding_plan: plan,
         });
     }
 
@@ -156,8 +159,8 @@ impl BlockEncoder {
     }
 
     /// static method for encoding data
-    pub(crate) fn encode_data(config: &ObjectTransmissionInformation, data: &[u8], packet_size: u16, block_id: u32) -> Vec<EncodedBlock> {
-        let encoder = SourceBlockEncoder::new2(0, config, data);
+    pub(crate) fn encode_data(config: &ObjectTransmissionInformation, plan: &SourceBlockEncodingPlan, data: &[u8], packet_size: u16, block_id: u32) -> Vec<EncodedBlock> {
+        let encoder = SourceBlockEncoder::with_encoding_plan2(0, config, data, plan);
         let packets_to_send = data.len() / packet_size as usize;
         let mut blocks :Vec<EncodedBlock> = Vec::new();
 
@@ -176,7 +179,7 @@ impl BlockEncoder {
 
     /// Creates packets to transmit.
     pub fn generate_encoded_blocks(&self) -> Vec<EncodedBlock> {
-        return BlockEncoder::encode_data(&self.config, &self.data, self.packet_size, self.block_id);
+        return BlockEncoder::encode_data(&self.config, &self.encoding_plan, &self.data, self.packet_size, self.block_id);
     }
 
     /// Gets information about payload required for decoding.
@@ -221,7 +224,7 @@ mod tests {
     }
     
     #[test]
-    fn test_block_encoder_single_client() {
+    fn test_block_encoder_single_peer() {
         let packet_size: u16 = 1280;
         let data_size: usize = 128 * 1024;
         let data = gen_data(data_size);
@@ -268,43 +271,5 @@ mod tests {
             Ok(recovered_data) => assert_eq!(arr_eq(&recovered_data, &data), true),
             Err(error) => panic!("Failed to decode data, err {}", error as u32),
         }
-    }
-
-    // this test should be run with --release, due to raptorq performance. 
-    #[cfg(not(debug_assertions))]
-    #[test]
-    fn test_encoder_single_peer() {
-        let packet_size: u16 = MIN_PACKET_SIZE;
-        let num_blocks: usize = 3;
-        let data_size: usize = RAPTORQ_MAX_SYMBOLS_IN_BLOCK * packet_size as usize * num_blocks;
-
-        // for this test to work, we expect NO PADDING!
-        assert_eq!(data_size % packet_size as usize, 0);
-
-        let data = gen_data(data_size);
-
-        let encoder = match RaptorQEncoder::new(packet_size, &data) {
-            Ok(succ) => succ,
-            Err(error) => panic!("Failed to create encoder, error {}", error as u32),
-        };
-
-        let mut blocks_total = encoder.generate_encoded_blocks();
-        let block_info_vec = encoder.get_block_info_vec();
-
-        let mut start_index: usize = 0;
-        for block_info in block_info_vec.iter() {
-            assert_eq!(block_info.padded_size, block_info.payload_size);
-            let (drained, rest): (Vec<EncodedBlock>, Vec<EncodedBlock>) = blocks_total.into_iter().partition(|x| x.block_id == block_info.block_id);
-            blocks_total = rest;
-
-            match BlockDecoder::decode_data(&block_info, drained) {
-                Ok(recovered_data) => assert_eq!(arr_eq(&recovered_data, &data[start_index..(start_index + block_info.padded_size)]), true),
-                Err(error) => panic!("Failed to decode data, err {}", error as u32),
-            }
-
-            start_index += block_info.padded_size;
-        }
-        
-        assert_eq!(blocks_total.len(), 0);
     }
 }

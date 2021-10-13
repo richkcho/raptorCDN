@@ -12,6 +12,9 @@ pub const RAPTORQ_ENCODING_SYMBOL_ID_MAX: usize = 1 << 24;
 /// Maximum symbols allowed to be in a block in the raptorq spec. 
 pub const RAPTORQ_MAX_SYMBOLS_IN_BLOCK: usize = 56403;
 
+/// Maximum symbols we allow in a block. 
+pub const MAX_SYMBOLS_IN_BLOCK: usize = 1024;
+
 /// Alignment of symbols in memory in bytes.
 pub const ALIGNMENT: u8 = 8;
 

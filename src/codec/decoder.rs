@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use raptorq::{
     EncodingPacket, ObjectTransmissionInformation, SourceBlockDecoder,
 };
+use std::collections::HashSet;
 
 use super::encoder::{
     BlockInfo,
@@ -14,6 +15,12 @@ pub enum RaptorQDecoderError {
     /// TODO: make errors more useful. 
     BadBlockId,
     RaptorQDecodeFailed,
+    BadBlockInfo
+}
+
+pub struct RaptorQDecoder {
+    block_info_vec: Vec<BlockInfo>,
+    blocks: Vec<Vec<EncodedBlock>>,
 }
 
 /// A representation of a BlockDecoder
