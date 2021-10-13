@@ -4,6 +4,7 @@ use raptorq::{EncodingPacket, ObjectTransmissionInformation, SourceBlockEncoder,
 use std::cmp;
 use super::consts::*;
 use rand::{thread_rng, Rng};
+use rayon::prelude::*;
 
 pub struct RaptorQEncoder {
     data_size: usize,
@@ -18,35 +19,25 @@ impl RaptorQEncoder {
 
         let data_chunks: Vec<Vec<u8>> = data.chunks(block_size).map(|x| x.to_vec()).collect();
 
-        // create block encoders
-        let mut block_encoders: Vec<BlockEncoder> = Vec::new();
-        for (i, data_chunk) in data_chunks.iter().enumerate() {
-            match BlockEncoder::new(i as u32, packet_size, data_chunk.to_vec()) {
-                Ok(block_encoder) => block_encoders.push(block_encoder),
-                Err(error) => return Err(error),
-            }
-        }
-        return Ok(RaptorQEncoder {
-            data_size: data.len(),
-            packet_size: packet_size,
-            block_encoders: block_encoders,
-        });
+        let encoder_results: Result<Vec<BlockEncoder>, RaptorQEncoderError> = data_chunks.par_iter().enumerate().map(|(i, data_chunk)| BlockEncoder::new(i as u32, packet_size, data_chunk.to_vec())).collect();
+
+        match encoder_results {
+            Ok(block_encoders) =>
+                return Ok(RaptorQEncoder {
+                data_size: data.len(),
+                packet_size: packet_size,
+                block_encoders: block_encoders,
+            }),
+            Err(error) => return Err(error),
+        };
     }
 
     pub fn generate_encoded_blocks(&self) -> Vec<EncodedBlock> {
-        let mut blocks: Vec<EncodedBlock> = Vec::new();
-
-        blocks = self.block_encoders.into_par_stream();
-
-        for block_encoder in self.block_encoders.iter() {
-            blocks.append(&mut block_encoder.generate_encoded_blocks());
-        }
-
-        return blocks;
+        return self.block_encoders.par_iter().map(|encoder| encoder.generate_encoded_blocks()).flatten().collect();
     }
 
     pub fn get_block_info_vec(&self) -> Vec<BlockInfo> {
-        return self.block_encoders.iter().map(|x| x.get_block_info()).collect();
+        return self.block_encoders.par_iter().map(|x| x.get_block_info()).collect();
     }
 
     pub fn mark_block_done(&self) {
