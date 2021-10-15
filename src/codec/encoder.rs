@@ -39,10 +39,6 @@ impl RaptorQEncoder {
     pub fn get_block_info_vec(&self) -> Vec<BlockInfo> {
         return self.block_encoders.par_iter().map(|x| x.get_block_info()).collect();
     }
-
-    pub fn mark_block_done(&self) {
-
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -26,13 +26,37 @@ fn main() {
     let data = gen_data(data_size);
 
     println!("Creating encoder...");
+    let mut now = Instant::now();
     let encoder = match codec::encoder::RaptorQEncoder::new(packet_size, &data) {
         Ok(succ) => succ,
         Err(error) => panic!("Failed to create encoder, error {}", error as u32),
     };
+    println!("Created encoder in {} ms", now.elapsed().as_millis());
     
+    println!("Creating decoder...");
+    now = Instant::now();
+    let mut decoder = match codec::decoder::RaptorQDecoder::new(encoder.get_block_info_vec()) {
+        Ok(succ) => succ,
+        Err(error) => panic!("Failed to create decoder, error {}", error as u32),
+    };
+    println!("Created decoder in {} ms", now.elapsed().as_millis());
+
     println!("Generating encoded data...");
-    let now = Instant::now();
+    now = Instant::now();
     let mut blocks_total = encoder.generate_encoded_blocks();
-    println!("Duration {}", now.elapsed().as_millis());
+    println!("Generated encoded data in {} ms", now.elapsed().as_millis());
+
+    println!("Decoding encoded data...");
+    now = Instant::now();
+    decoder.consume_blocks(blocks_total);
+    let result = decoder.decode_blocks();
+    println!("Decoded data in {} ms", now.elapsed().as_millis());
+
+    let recovered_data = match result {
+        Ok(data) => data,
+        Err(error) => panic!("Failed to decode, error {}", error as u32),
+    };
+
+    assert_eq!(data, recovered_data);
+    println!("Everything worked!");
 }
