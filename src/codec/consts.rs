@@ -7,7 +7,7 @@ const fn const_min(a: usize, b: usize) -> usize {
  * Other constants are defined by the encoder implementation. 
  */
 // source block number limit as defined in the raptorq spec.
-pub const RAPTORQ_ENCODING_SYMBOL_ID_MAX: usize = 1 << 24;
+pub const RAPTORQ_ENCODING_SYMBOL_ID_MAX: usize = 1 << 24 - 1;
 
 /// Maximum symbols allowed to be in a block in the raptorq spec. 
 pub const RAPTORQ_MAX_SYMBOLS_IN_BLOCK: usize = 56403;
