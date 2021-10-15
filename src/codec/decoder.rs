@@ -79,11 +79,12 @@ impl BlockDecoder {
         return Ok(block.data);
     }
 
+    // the raptorq wants an owned Vec<EncodingPacket>, so we create this for it. 
     fn extract_packets(blocks: Vec<EncodedBlock>, block_id: u32) -> Result<Vec<EncodingPacket>, RaptorQDecoderError> {
         return blocks.into_iter().map(|block| BlockDecoder::extract_packet(block, block_id)).collect();
     }
 
-    /// static method for encoding data
+    /// static method for decoding data
     pub(crate) fn decode_data(block_info: &BlockInfo, blocks: Vec<EncodedBlock>) -> Result<Vec<u8>, RaptorQDecoderError> {
         let mut decoder = SourceBlockDecoder::new2(0, &block_info.config, block_info.padded_size as u64);
 
@@ -103,6 +104,7 @@ impl BlockDecoder {
         return Ok(decoded_data);
     }
 
+    /// consume and decode blocks according to the BlockInfo associated with this BlockDecoder
     pub fn decode_blocks(&self, blocks: Vec<EncodedBlock>) -> Result<Vec<u8>, RaptorQDecoderError> {
         return BlockDecoder::decode_data(&self.block_info, blocks);
     }
