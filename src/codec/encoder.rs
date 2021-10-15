@@ -56,7 +56,9 @@ pub enum RaptorQEncoderError {
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde_support", derive(Serialize, Deserialize))]
 pub struct EncodedBlock {
+    /// Index of this block in overall payload
     pub block_id: u32,
+    /// raptorq packet
     pub data: EncodingPacket,
 }
 

@@ -19,40 +19,39 @@ pub enum RaptorQDecoderError {
 }
 
 pub struct RaptorQDecoder {
-    block_info_vec: Vec<BlockInfo>,
+    block_decoders: Vec<BlockDecoder>,
     blocks: Vec<Vec<EncodedBlock>>,
+
 }
 
 impl RaptorQDecoder {
     pub fn new(block_info_vec: Vec<BlockInfo>) -> Result<RaptorQDecoder, RaptorQDecoderError> {
-        let mut expected_ids: Vec<bool> = Vec::with_capacity(block_info_vec.len());
-        for block_info in block_info_vec.iter() {
-            if expected_ids[block_info.block_id as usize] {
-                return Err(RaptorQDecoderError::BadBlockInfo);
-            }
-
-            expected_ids[block_info.block_id as usize] = true;
-        }
-
-        if expected_ids.iter().all(|x| !*x) {
+        // validate the block info vector, it should be a permutation of (0..num_blocks-1)
+        // pepega strat: sort and assert equality to 1..block_info_vec.len()
+        let block_ids: Vec<usize> = block_info_vec.iter().map(|block_info| block_info.block_id as usize).collect();
+        if block_ids != (0..block_info_vec.len()).collect::<Vec<usize>>() {
             return Err(RaptorQDecoderError::BadBlockInfo);
         }
 
-        return Ok(RaptorQDecoder{block_info_vec: block_info_vec, blocks: Vec::with_capacity(expected_ids.len())});
+        let block_decoder_results: Result<Vec<BlockDecoder>, RaptorQDecoderError> = block_info_vec.into_iter().map(|block_info| BlockDecoder::new(block_info)).collect();
+        match block_decoder_results {
+            Ok(block_decoders) => return Ok(RaptorQDecoder{block_decoders: block_decoders, blocks: Vec::with_capacity(block_decoders.len())}),
+            Err(error) => return Err(error),
+        }
+    }
+
+    fn add_block(&mut self, block: EncodedBlock) -> usize {
+        if (block.block_id as usize) < self.blocks.len() {
+            self.blocks[block.block_id as usize].push(block);
+            return 1;
+        }
+
+        return 0;
     }
 
     /// consume some blocks into the decoder, report back how many blocks have been consumed
-    pub fn add_blocks(&mut self, mut blocks: Vec<EncodedBlock>) -> usize {
-        loop {
-            match blocks.pop() {
-                Some(block) => {
-                    if (block.block_id as usize) < blocks.len() {
-                        self.blocks[block.block_id as usize].push(block);
-                    }
-                },
-                None => break 42,
-            }
-        }
+    pub fn add_blocks(&mut self, blocks: Vec<EncodedBlock>) -> usize {
+        return blocks.into_iter().map(|block| self.add_block(block)).sum();
     }
 }
 
