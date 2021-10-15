@@ -39,10 +39,6 @@ impl RaptorQEncoder {
     pub fn get_block_info_vec(&self) -> Vec<BlockInfo> {
         return self.block_encoders.par_iter().map(|x| x.get_block_info()).collect();
     }
-
-    pub fn mark_block_done(&self) {
-
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,7 +52,9 @@ pub enum RaptorQEncoderError {
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde_support", derive(Serialize, Deserialize))]
 pub struct EncodedBlock {
+    /// Index of this block in overall payload
     pub block_id: u32,
+    /// raptorq packet
     pub data: EncodingPacket,
 }
 
