@@ -35,7 +35,7 @@ impl RaptorQDecoder {
 
         let block_decoder_results: Result<Vec<BlockDecoder>, RaptorQDecoderError> = block_info_vec.into_iter().map(|block_info| BlockDecoder::new(block_info)).collect();
         match block_decoder_results {
-            Ok(block_decoders) => return Ok(RaptorQDecoder{block_decoders: block_decoders, blocks: Vec::with_capacity(block_decoders.len())}),
+            Ok(block_decoders) => return Ok(RaptorQDecoder{blocks: Vec::with_capacity(block_decoders.len()), block_decoders: block_decoders}),
             Err(error) => return Err(error),
         }
     }
