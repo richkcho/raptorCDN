@@ -1,5 +1,5 @@
 mod codec;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use rand::Rng;
 use num_format::{Locale, ToFormattedString};
 
@@ -43,7 +43,7 @@ fn main() {
 
     println!("Generating encoded data...");
     now = Instant::now();
-    let mut blocks_total = encoder.generate_encoded_blocks();
+    let blocks_total = encoder.generate_encoded_blocks();
     println!("Generated encoded data in {} ms", now.elapsed().as_millis());
 
     println!("Decoding encoded data...");
