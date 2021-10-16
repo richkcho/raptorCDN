@@ -3,7 +3,7 @@
  * Other constants are defined by the encoder implementation. 
  */
 // source block number limit as defined in the raptorq spec.
-pub const RAPTORQ_ENCODING_SYMBOL_ID_MAX: usize = 1 << 24 - 1;
+pub const RAPTORQ_ENCODING_SYMBOL_ID_MAX: usize = 1 << 23;
 
 /// Maximum symbols we allow in a block. This should be less than 56403, which is the maximum symbol per block allowed by raptorq. 
 pub const MAX_SYMBOLS_IN_BLOCK: usize = 1024;

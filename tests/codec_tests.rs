@@ -8,11 +8,11 @@ fn gen_data(len: usize) -> Vec<u8> {
     for _ in 0..len {
         data.push(rand::thread_rng().gen());
     }
-    return data;
+    data
 }
 
 fn arr_eq(data1: &[u8], data2: &[u8]) -> bool {
-    return data1.iter().zip(data2.iter()).all(|(a,b)| a == b);
+    data1.iter().zip(data2.iter()).all(|(a,b)| a == b)
 }
 
 #[test]
