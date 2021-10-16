@@ -2,7 +2,7 @@
  * Constants defined in the RPC spec are prefixed with RAPTORQ_
  * Other constants are defined by the encoder implementation. 
  */
-// source block number limit as defined in the raptorq spec.
+// source block number limit as defined in the raptorq spec, but a little less. 
 pub const RAPTORQ_ENCODING_SYMBOL_ID_MAX: usize = 1 << 23;
 
 /// Maximum symbols we allow in a block. This should be less than 56403, which is the maximum symbol per block allowed by raptorq. 
