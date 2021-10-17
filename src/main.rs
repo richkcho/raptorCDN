@@ -8,7 +8,7 @@ fn gen_data(len: usize) -> Vec<u8> {
     for _ in 0..len {
         data.push(rand::thread_rng().gen());
     }
-    return data;
+    data
 }
 
 fn main() {

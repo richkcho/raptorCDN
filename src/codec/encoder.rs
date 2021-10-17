@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use raptorq::{EncodingPacket, ObjectTransmissionInformation, SourceBlockEncoder, SourceBlockEncodingPlan};
 use std::cmp;
 use super::consts::*;
-use rand::{thread_rng, Rng};
+use rand::{thread_rng, Rng, seq::SliceRandom};
 use rayon::prelude::*;
 
 pub struct RaptorQEncoder {
@@ -21,19 +21,22 @@ impl RaptorQEncoder {
 
         match encoder_results {
             Ok(block_encoders) =>
-                return Ok(RaptorQEncoder {
-                block_encoders: block_encoders,
+                Ok(RaptorQEncoder {
+                block_encoders,
             }),
-            Err(error) => return Err(error),
-        };
+            Err(error) => Err(error),
+        }
     }
 
     pub fn generate_encoded_blocks(&self) -> Vec<EncodedBlock> {
-        return self.block_encoders.par_iter().map(|encoder| encoder.generate_encoded_blocks()).flatten().collect();
+        // shuffle blocks so multiple encoders don't all send blocks in the same order. Transposing would in theory help here, but I don't know how costly that is. 
+        let mut encoded_blocks: Vec<Vec<EncodedBlock>> = self.block_encoders.par_iter().map(|encoder| encoder.generate_encoded_blocks()).collect();
+        encoded_blocks.shuffle(&mut thread_rng());
+        encoded_blocks.into_iter().flatten().collect()
     }
 
     pub fn get_block_info_vec(&self) -> Vec<BlockInfo> {
-        return self.block_encoders.par_iter().map(|x| x.get_block_info()).collect();
+        self.block_encoders.par_iter().map(|x| x.get_block_info()).collect()
     }
 }
 
@@ -109,7 +112,7 @@ impl BlockEncoder {
             return Err(RaptorQEncoderError::DataSizeTooLarge);
         }
 
-        let plan = SourceBlockEncodingPlan::generate(num_symbols as u16);
+        let encoding_plan = SourceBlockEncodingPlan::generate(num_symbols as u16);
 
         /*
          * ObjectTransmissionInformation is described roughly by the RFC spec:
@@ -126,7 +129,7 @@ impl BlockEncoder {
          * Notes:
          * Consider tweaking the sub-block argument.
          */
-        return Ok(BlockEncoder {
+        Ok(BlockEncoder {
             config: ObjectTransmissionInformation::new(
                 data.len() as u64,
                 packet_size,
@@ -134,19 +137,19 @@ impl BlockEncoder {
                 1,
                 ALIGNMENT,
             ),
-            data: data,
-            payload_size: payload_size,
-            packet_size: packet_size,
-            block_id: block_id,
-            encoding_plan: plan,
-        });
+            data,
+            payload_size,
+            packet_size,
+            block_id,
+            encoding_plan,
+        })
     }
 
     fn add_packets(blocks:&mut Vec<EncodedBlock>, mut packets: Vec<EncodingPacket>, block_id: u32) {
         while match packets.pop() {
             None => false,
             Some(packet) => {
-                blocks.push(EncodedBlock{block_id: block_id, data: packet});
+                blocks.push(EncodedBlock{block_id, data: packet});
                 true
             },
         } {}
@@ -168,21 +171,21 @@ impl BlockEncoder {
             BlockEncoder::add_packets(&mut blocks, encoder.repair_packets(0, (packets_to_send - packets_created) as u32), block_id);
         }
 
-        return blocks;
+        blocks
     }
 
     /// Creates packets to transmit.
     pub fn generate_encoded_blocks(&self) -> Vec<EncodedBlock> {
-        return BlockEncoder::encode_data(&self.config, &self.encoding_plan, &self.data, self.packet_size, self.block_id);
+        BlockEncoder::encode_data(&self.config, &self.encoding_plan, &self.data, self.packet_size, self.block_id)
     }
 
     /// Gets information about payload required for decoding.
     pub fn get_block_info(&self) -> BlockInfo {
-        return BlockInfo {
+        BlockInfo {
             payload_size: self.payload_size,
             padded_size: self.data.len(),
             config: self.config,
             block_id: self.block_id,
-        };
+        }
     }
 }
