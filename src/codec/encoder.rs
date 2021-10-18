@@ -13,6 +13,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path;
+use std::io::prelude::*;
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
+use flate2::read::ZlibDecoder;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedEncodingPlan {
@@ -21,7 +25,9 @@ pub struct CachedEncodingPlan {
 }
 
 fn load_cached_encoding_plan(path: &path::PathBuf) -> Result<CachedEncodingPlan> {
-    let json_data = fs::read_to_string(path)?;
+    let mut zlib_decoder = ZlibDecoder::new(fs::File::open(path)?);
+    let mut json_data = String::new();
+    zlib_decoder.read_to_string(&mut json_data)?;
 
     Ok(serde_json::from_str::<CachedEncodingPlan>(&json_data)?)
 }
@@ -31,7 +37,7 @@ fn load_cached_encoding_plans(dir: &str) -> Result<Vec<CachedEncodingPlan>> {
         .map(|res| res.map(|e| e.path()))
         .collect::<Result<Vec<_>, io::Error>>()?
         .into_iter()
-        .filter(|p| p.is_file() && p.extension().and_then(std::ffi::OsStr::to_str) == Some("json"))
+        .filter(|p| p.is_file() && p.extension().and_then(std::ffi::OsStr::to_str) == Some("json-zip"))
         .collect();
 
     plan_files.iter().map(load_cached_encoding_plan).collect()
@@ -49,9 +55,13 @@ pub fn load_encoding_plans(dir: &str) -> Result<HashMap<u16, SourceBlockEncoding
 
 fn save_encoding_plan(dir: &str, cached_plan: &CachedEncodingPlan) -> Result<()> {
     let file_path =
-        path::Path::new(dir).join(format!("plan_{}.json", cached_plan.source_symbol_count));
+        path::Path::new(dir).join(format!("plan_{}.json-zip", cached_plan.source_symbol_count));
 
-    Ok(fs::write(file_path, serde_json::to_string(&cached_plan)?)?)
+    let mut zlib_encoder = ZlibEncoder::new(fs::File::create(file_path)?, Compression::default());
+    zlib_encoder.write_all(serde_json::to_string(&cached_plan)?.as_bytes())?;
+    zlib_encoder.finish()?;
+
+    Ok(())
 }
 
 pub fn save_encoding_plans(dir: &str, plans: &HashMap<u16, SourceBlockEncodingPlan>) -> Result<()> {

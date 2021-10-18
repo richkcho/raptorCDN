@@ -12,6 +12,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1.0"
+flate2 = "1.0"
 num-format = "0.4"
 raptorq = { version = "1.6", features = ["serde_support"] }
 rand = "0.8"
