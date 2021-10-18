@@ -1,7 +1,7 @@
 mod codec;
-use std::time::Instant;
-use rand::Rng;
 use num_format::{Locale, ToFormattedString};
+use rand::Rng;
+use std::time::Instant;
 
 fn gen_data(len: usize) -> Vec<u8> {
     let mut data: Vec<u8> = Vec::with_capacity(len);
@@ -13,15 +13,12 @@ fn gen_data(len: usize) -> Vec<u8> {
 
 fn main() {
     println!("I do nothing for now.");
-    let packet_size: u16 = 16384;
-    let num_blocks: usize = 3;
+    let packet_size: u16 = 1280;
+    let num_blocks: usize = 30;
     let data_size: usize = codec::consts::MAX_SYMBOLS_IN_BLOCK * packet_size as usize * num_blocks;
-    
     println!("data size {}", data_size.to_formatted_string(&Locale::en));
-    
     // for this test to work, we expect NO PADDING!
     assert_eq!(data_size % packet_size as usize, 0);
-    
     println!("Generating data...");
     let data = gen_data(data_size);
 
@@ -32,7 +29,6 @@ fn main() {
         Err(error) => panic!("Failed to create encoder, error {}", error as u32),
     };
     println!("Created encoder in {} ms", now.elapsed().as_millis());
-    
     println!("Creating decoder...");
     now = Instant::now();
     let mut decoder = match codec::decoder::RaptorQDecoder::new(encoder.get_block_info_vec()) {
