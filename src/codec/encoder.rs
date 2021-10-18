@@ -31,9 +31,7 @@ fn load_cached_encoding_plans(dir: &str) -> Result<Vec<CachedEncodingPlan>> {
         .map(|res| res.map(|e| e.path()))
         .collect::<Result<Vec<_>, io::Error>>()?
         .into_iter()
-        .filter(|p| {
-            p.is_file() && p.extension().and_then(std::ffi::OsStr::to_str) == Some("json")
-        })
+        .filter(|p| p.is_file() && p.extension().and_then(std::ffi::OsStr::to_str) == Some("json"))
         .collect();
 
     plan_files.iter().map(load_cached_encoding_plan).collect()
@@ -49,51 +47,81 @@ pub fn load_encoding_plans(dir: &str) -> Result<HashMap<u16, SourceBlockEncoding
     Ok(hashmap)
 }
 
-fn save_encoding_plan(dir: &str, cached_plan: CachedEncodingPlan) -> Result<()> {
-    let file_path = path::Path::new(dir).join(format!("plan_{}.json", cached_plan.source_symbol_count));
+fn save_encoding_plan(dir: &str, cached_plan: &CachedEncodingPlan) -> Result<()> {
+    let file_path =
+        path::Path::new(dir).join(format!("plan_{}.json", cached_plan.source_symbol_count));
 
     Ok(fs::write(file_path, serde_json::to_string(&cached_plan)?)?)
 }
 
-pub fn save_encoding_plans(dir: &str, plans: HashMap<u16, SourceBlockEncodingPlan>) -> Result<()> {
-    let cached_plans: Vec<CachedEncodingPlan> = plans.iter().map(|(k, v)| CachedEncodingPlan {source_symbol_count: *k, plan: v.clone()}).collect();
+pub fn save_encoding_plans(dir: &str, plans: &HashMap<u16, SourceBlockEncodingPlan>) -> Result<()> {
+    let cached_plans: Vec<CachedEncodingPlan> = plans
+        .iter()
+        .map(|(k, v)| CachedEncodingPlan {
+            source_symbol_count: *k,
+            plan: v.clone(),
+        })
+        .collect();
 
     for cached_plan in cached_plans {
-        save_encoding_plan(dir, cached_plan)?;
+        save_encoding_plan(dir, &cached_plan)?;
     }
 
     Ok(())
 }
 
-struct EncodingPlanCache {
-    lock: std::sync::RwLock<usize>,
-    plans: HashMap<u16, SourceBlockEncodingPlan>,
-}
-
 pub struct RaptorQEncoder {
     block_encoders: Vec<BlockEncoder>,
-    encoding_plan_cache: EncodingPlanCache,
 }
 
 /// RaptorQ data encoder.
 impl RaptorQEncoder {
-    pub fn new(packet_size: u16, data: &[u8], encoding_plans: HashMap<u16, SourceBlockEncodingPlan>) -> Result<RaptorQEncoder, RaptorQEncoderError> {
+    pub fn new(
+        packet_size: u16,
+        data: &[u8],
+        encoding_plan_cache: Option<&mut HashMap<u16, SourceBlockEncodingPlan>>,
+    ) -> Result<RaptorQEncoder> {
         let block_size = MAX_SYMBOLS_IN_BLOCK as usize * packet_size as usize;
 
         let data_chunks: Vec<Vec<u8>> = data.chunks(block_size).map(|x| x.to_vec()).collect();
 
-        let mut encoding_plan_cache = EncodingPlanCache {lock:std::sync::RwLock::new(0), plans: encoding_plans};
+        let block_encoders: Vec<BlockEncoder> = data_chunks
+            .par_iter()
+            .enumerate()
+            .map(|(i, data_chunk)| {
+                BlockEncoder::new(
+                    i as u32,
+                    packet_size,
+                    data_chunk.to_vec(),
+                    match &encoding_plan_cache {
+                        Some(plan) => Some(&*plan),
+                        None => None,
+                    },
+                )
+            })
+            .collect::<Result<Vec<BlockEncoder>>>()?;
 
-        let encoder_results: Result<Vec<BlockEncoder>, RaptorQEncoderError> = data_chunks.iter().enumerate().map(|(i, chunk)| (i, chunk, &encoding_plan_cache))
-            .par_bridge()
-            .map(|(i, data_chunk, mut cache_ref)| BlockEncoder::new(i as u32, packet_size, data_chunk.to_vec(), &cache_ref))
-            .collect();
-
-
-        match encoder_results {
-            Ok(block_encoders) => Ok(RaptorQEncoder { block_encoders, encoding_plan_cache}),
-            Err(error) => Err(error),
+        // if cache was provided, update it. 
+        match encoding_plan_cache {
+            Some(cache) => {
+                let uncached_values = block_encoders
+                    .iter()
+                    .map(|encoder| {
+                        (
+                            (encoder.data.len() / encoder.packet_size as usize) as u16,
+                            encoder.encoding_plan.clone(),
+                        )
+                    })
+                    .filter(|(syms, _)| !cache.contains_key(&syms))
+                    .collect::<Vec<(u16, SourceBlockEncodingPlan)>>();
+                for uncached_value in uncached_values {
+                    cache.insert(uncached_value.0, uncached_value.1);
+                }
+            }
+            None => (),
         }
+
+        Ok(RaptorQEncoder { block_encoders })
     }
 
     pub fn generate_encoded_blocks(&self) -> Vec<EncodedBlock> {
@@ -113,14 +141,6 @@ impl RaptorQEncoder {
             .map(|x| x.get_block_info())
             .collect()
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RaptorQEncoderError {
-    /// Packet size provided is not valid.
-    /// TODO: make errors more useful.
-    InvalidPacketSize,
-    DataSizeTooLarge,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash, Serialize, Deserialize)]
@@ -168,10 +188,13 @@ impl BlockEncoder {
         block_id: u32,
         packet_size: u16,
         mut data: Vec<u8>,
-        encoding_plan_cache: &mut EncodingPlanCache
-    ) -> Result<BlockEncoder, RaptorQEncoderError> {
+        encoding_plan_cache: Option<&HashMap<u16, SourceBlockEncodingPlan>>,
+    ) -> Result<BlockEncoder> {
         if packet_size % ALIGNMENT as u16 != 0 || packet_size < MIN_PACKET_SIZE {
-            return Err(RaptorQEncoderError::InvalidPacketSize);
+            return Err(anyhow::anyhow!(
+                "BlockEncoder error: bad packet size {}",
+                packet_size
+            ));
         }
 
         let payload_size = data.len();
@@ -184,21 +207,23 @@ impl BlockEncoder {
             );
         }
 
+        assert_eq!(data.len() % packet_size as usize, 0);
+
         let num_symbols = (data.len() / packet_size as usize) as u16;
-
         if num_symbols > MAX_SYMBOLS_IN_BLOCK {
-            return Err(RaptorQEncoderError::DataSizeTooLarge);
+            return Err(anyhow::anyhow!(
+                "BlockEncoder error: data length too large: {}",
+                payload_size
+            ));
         }
 
-        let (update_cache, encoding_plan) = match (encoding_plan_cache.lock.read().unwrap(), encoding_plan_cache.plans.get(&num_symbols)) {
-            (_, Some(plan)) => (false, plan.clone()),
-            (_, None) => (true, SourceBlockEncodingPlan::generate(num_symbols)),
+        let encoding_plan = match encoding_plan_cache {
+            Some(cache) => match cache.get(&num_symbols) {
+                Some(plan) => plan.clone(),
+                None => SourceBlockEncodingPlan::generate(num_symbols),
+            },
+            None => SourceBlockEncodingPlan::generate(num_symbols),
         };
-        
-        if update_cache {
-            encoding_plan_cache.lock.write().unwrap();
-            encoding_plan_cache.plans.insert(num_symbols, encoding_plan.clone());
-        }
 
         /*
          * ObjectTransmissionInformation is described roughly by the RFC spec:

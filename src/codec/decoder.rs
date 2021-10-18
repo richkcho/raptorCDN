@@ -1,22 +1,15 @@
 use raptorq::{EncodingPacket, SourceBlockDecoder};
 use rayon::prelude::*;
-
+use anyhow;
+use anyhow::Result;
 use super::encoder::{BlockInfo, EncodedBlock};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RaptorQDecoderError {
-    /// TODO: make errors more useful.
-    BadBlockId,
-    RaptorQDecodeFailed,
-    BadBlockInfo,
-}
 
 pub struct RaptorQDecoder {
     block_decoder_data: Vec<(BlockDecoder, Vec<EncodedBlock>)>,
 }
 
 impl RaptorQDecoder {
-    pub fn new(block_info_vec: Vec<BlockInfo>) -> Result<RaptorQDecoder, RaptorQDecoderError> {
+    pub fn new(block_info_vec: Vec<BlockInfo>) -> Result<RaptorQDecoder> {
         // validate the block info vector, it should be a permutation of (0..num_blocks-1)
         // pepega strat: sort and assert equality to 1..block_info_vec.len()
         let block_ids: Vec<usize> = block_info_vec
@@ -24,14 +17,14 @@ impl RaptorQDecoder {
             .map(|block_info| block_info.block_id as usize)
             .collect();
         if block_ids != (0..block_info_vec.len()).collect::<Vec<usize>>() {
-            return Err(RaptorQDecoderError::BadBlockInfo);
+            return Err(anyhow::anyhow!("RaptorQDecoder error: bad / incomplete block id set"));
         }
 
         Ok(RaptorQDecoder {
             block_decoder_data: block_info_vec
                 .into_iter()
                 .map(BlockDecoder::new)
-                .collect::<Result<Vec<BlockDecoder>, RaptorQDecoderError>>()?
+                .collect::<Result<Vec<BlockDecoder>>>()?
                 .into_iter()
                 .map(|x| (x, Vec::new()))
                 .collect(),
@@ -58,12 +51,12 @@ impl RaptorQDecoder {
     }
 
     /// Attempt to decode the blocks.
-    pub fn decode_blocks(&mut self) -> Result<Vec<u8>, RaptorQDecoderError> {
+    pub fn decode_blocks(&mut self) -> Result<Vec<u8>> {
         Ok(self
             .block_decoder_data
             .par_iter()
             .map(|(decoder, blocks)| decoder.decode_blocks(blocks.to_vec()))
-            .collect::<Result<Vec<Vec<u8>>, RaptorQDecoderError>>()?
+            .collect::<Result<Vec<Vec<u8>>>>()?
             .into_iter()
             .flatten()
             .collect())
@@ -77,16 +70,16 @@ pub struct BlockDecoder {
 }
 
 impl BlockDecoder {
-    pub fn new(block_info: BlockInfo) -> Result<BlockDecoder, RaptorQDecoderError> {
+    pub fn new(block_info: BlockInfo) -> Result<BlockDecoder> {
         Ok(BlockDecoder { block_info })
     }
 
     fn extract_packet(
         block: EncodedBlock,
         block_id: u32,
-    ) -> Result<EncodingPacket, RaptorQDecoderError> {
+    ) -> Result<EncodingPacket> {
         if block.block_id != block_id {
-            return Err(RaptorQDecoderError::BadBlockId);
+            return Err(anyhow::anyhow!("BlockDecoder error: block id mismatch!"));
         }
 
         Ok(block.data)
@@ -96,7 +89,7 @@ impl BlockDecoder {
     fn extract_packets(
         blocks: Vec<EncodedBlock>,
         block_id: u32,
-    ) -> Result<Vec<EncodingPacket>, RaptorQDecoderError> {
+    ) -> Result<Vec<EncodingPacket>> {
         blocks
             .into_iter()
             .map(|block| BlockDecoder::extract_packet(block, block_id))
@@ -107,13 +100,13 @@ impl BlockDecoder {
     pub fn decode_data(
         block_info: &BlockInfo,
         blocks: Vec<EncodedBlock>,
-    ) -> Result<Vec<u8>, RaptorQDecoderError> {
+    ) -> Result<Vec<u8>> {
         let mut decoder =
             SourceBlockDecoder::new2(0, &block_info.config, block_info.padded_size as u64);
 
         let mut decoded_data = decoder
             .decode(BlockDecoder::extract_packets(blocks, block_info.block_id)?)
-            .ok_or(RaptorQDecoderError::RaptorQDecodeFailed)?;
+            .ok_or(anyhow::anyhow!("BlockDecoder error: block decode failed!"))?;
 
         assert_eq!(decoded_data.len(), block_info.padded_size);
         decoded_data.truncate(block_info.payload_size);
@@ -122,7 +115,7 @@ impl BlockDecoder {
     }
 
     /// consume and decode blocks according to the BlockInfo associated with this BlockDecoder
-    pub fn decode_blocks(&self, blocks: Vec<EncodedBlock>) -> Result<Vec<u8>, RaptorQDecoderError> {
+    pub fn decode_blocks(&self, blocks: Vec<EncodedBlock>) -> Result<Vec<u8>> {
         BlockDecoder::decode_data(&self.block_info, blocks)
     }
 }
