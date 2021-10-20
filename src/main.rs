@@ -14,13 +14,10 @@ fn gen_data(len: usize) -> Vec<u8> {
 fn main() {
     println!("I do nothing for now.");
     let packet_size: u16 = 1280;
-    let num_blocks: usize = 30;
-    let data_size: usize = codec::consts::MAX_SYMBOLS_IN_BLOCK as usize * packet_size as usize * num_blocks;
+    let data_size: usize = 12345678;
 
 
     println!("data size {}", data_size.to_formatted_string(&Locale::en));
-    // for this test to work, we expect NO PADDING!
-    assert_eq!(data_size % packet_size as usize, 0);
     println!("Generating data...");
     let mut now = Instant::now();
     let data = gen_data(data_size);
