@@ -11,7 +11,11 @@ name = "raptor_cdn_lib"
 path = "src/lib.rs"
 
 [dependencies]
-raptorq = "1.6"
+anyhow = "1.0"
+flate2 = "1.0"
+num-format = "0.4"
+raptorq = { version = "1.6", features = ["serde_support"] }
 rand = "0.8"
 rayon = "1.5"
-num-format = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
