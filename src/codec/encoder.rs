@@ -53,7 +53,7 @@ pub fn load_encoding_plans(dir: &str) -> Result<HashMap<u16, SourceBlockEncoding
     Ok(hashmap)
 }
 
-fn save_encoding_plan(dir: &str, cached_plan: &CachedEncodingPlan) -> Result<()> {
+fn save_cached_encoding_plan(dir: &str, cached_plan: &CachedEncodingPlan) -> Result<()> {
     let file_path =
         path::Path::new(dir).join(format!("plan_{}.json-zip", cached_plan.source_symbol_count));
 
@@ -74,7 +74,7 @@ pub fn save_encoding_plans(dir: &str, plans: &HashMap<u16, SourceBlockEncodingPl
         .collect();
 
     for cached_plan in cached_plans {
-        save_encoding_plan(dir, &cached_plan)?;
+        save_cached_encoding_plan(dir, &cached_plan)?;
     }
 
     Ok(())
@@ -93,9 +93,7 @@ impl RaptorQEncoder {
     ) -> Result<RaptorQEncoder> {
         let block_size = MAX_SYMBOLS_IN_BLOCK as usize * packet_size as usize;
 
-        let data_chunks: Vec<Vec<u8>> = data.chunks(block_size).map(|x| x.to_vec()).collect();
-
-        let block_encoders: Vec<BlockEncoder> = data_chunks
+        let block_encoders: Vec<BlockEncoder> = data.chunks(block_size).collect::<Vec<&[u8]>>()
             .par_iter()
             .enumerate()
             .map(|(i, data_chunk)| {
@@ -200,7 +198,7 @@ impl BlockEncoder {
         mut data: Vec<u8>,
         encoding_plan_cache: Option<&HashMap<u16, SourceBlockEncodingPlan>>,
     ) -> Result<BlockEncoder> {
-        if packet_size % ALIGNMENT as u16 != 0 || packet_size < MIN_PACKET_SIZE {
+        if packet_size % ALIGNMENT as u16 != 0 || packet_size < MIN_PACKET_SIZE || packet_size > MAX_PACKET_SIZE {
             return Err(anyhow::anyhow!(
                 "BlockEncoder error: bad packet size {}",
                 packet_size
@@ -283,6 +281,14 @@ impl BlockEncoder {
         } {}
     }
 
+    fn overhead_packet_count(count: usize) -> usize {
+        if count < 64 {
+            count + 4
+        } else {
+            count + count / 16
+        }
+    }
+
     /// static method for encoding data
     pub fn encode_data(
         config: &ObjectTransmissionInformation,
@@ -292,7 +298,7 @@ impl BlockEncoder {
         block_id: u32,
     ) -> Vec<EncodedBlock> {
         let encoder = SourceBlockEncoder::with_encoding_plan2(0, config, data, plan);
-        let packets_to_send = data.len() / packet_size as usize;
+        let packets_to_send = BlockEncoder::overhead_packet_count(data.len() / packet_size as usize);
         let mut blocks: Vec<EncodedBlock> = Vec::new();
 
         let start_index = thread_rng().gen_range(0..RAPTORQ_ENCODING_SYMBOL_ID_MAX);

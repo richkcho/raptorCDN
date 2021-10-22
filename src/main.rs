@@ -2,6 +2,7 @@ mod codec;
 use num_format::{Locale, ToFormattedString};
 use rand::Rng;
 use std::time::Instant;
+use std::collections::HashSet;
 
 fn gen_data(len: usize) -> Vec<u8> {
     let mut data: Vec<u8> = Vec::with_capacity(len);
@@ -13,8 +14,8 @@ fn gen_data(len: usize) -> Vec<u8> {
 
 fn main() {
     println!("I do nothing for now.");
-    let packet_size: u16 = 1280;
-    let data_size: usize = 12345678;
+    let packet_size: u16 = 512;
+    let data_size: usize = 123456789;
 
 
     println!("data size {}", data_size.to_formatted_string(&Locale::en));
@@ -26,6 +27,7 @@ fn main() {
     println!("Loading cached SourceBlockEncodingPlans");
     now = Instant::now();
     let mut plans = codec::encoder::load_encoding_plans(".encoding_plan_cache/").unwrap();
+    let plan_keys: HashSet<u16> = plans.keys().copied().collect();
     println!("Loaded {} cached SourceBlockEncodingPlans in {} ms", plans.keys().len(), now.elapsed().as_millis());
     
 
@@ -38,6 +40,7 @@ fn main() {
 
     println!("Saving updated SourceBlockEncodingPlans");
     now = Instant::now();
+    plans.retain(|k,_| !plan_keys.contains(k));
     codec::encoder::save_encoding_plans(".encoding_plan_cache/", &plans).unwrap();
     println!("Saved {} cached SourceBlockEncodingPlans in {} ms", plans.keys().len(), now.elapsed().as_millis());
 

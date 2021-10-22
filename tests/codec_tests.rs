@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use rand::Rng;
 use raptor_cdn_lib::codec::consts::*;
 use raptor_cdn_lib::codec::decoder::*;
@@ -18,7 +19,7 @@ fn arr_eq(data1: &[u8], data2: &[u8]) -> bool {
 #[test]
 fn test_block_encoder_invalid_packet_size() {
     let packet_size: u16 = 1337;
-    let data_size: usize = 128 * 1024;
+    let data_size: usize = packet_size as usize * MAX_SYMBOLS_IN_BLOCK as usize;
     let data = gen_data(data_size);
 
     match BlockEncoder::new(0, packet_size, data.clone(), None) {
@@ -33,7 +34,7 @@ fn test_block_encoder_invalid_packet_size() {
 #[test]
 fn test_block_encoder_single_peer() {
     let packet_size: u16 = 1280;
-    let data_size: usize = 128 * 1024;
+    let data_size: usize = packet_size as usize * MAX_SYMBOLS_IN_BLOCK as usize;
     let data = gen_data(data_size);
 
     let encoder = match BlockEncoder::new(0, packet_size, data.clone(), None) {
@@ -51,7 +52,7 @@ fn test_block_encoder_single_peer() {
 #[test]
 fn test_block_encoder_multiple_peers() {
     let packet_size: u16 = 1280;
-    let data_size: usize = 128 * 1024;
+    let data_size: usize = packet_size as usize * MAX_SYMBOLS_IN_BLOCK as usize;
     let data = gen_data(data_size);
 
     let encoder = match BlockEncoder::new(0, packet_size, data.clone(), None) {
@@ -83,7 +84,7 @@ fn test_block_encoder_multiple_peers() {
 #[test]
 fn test_block_decode_single_client() {
     let packet_size: u16 = 1280;
-    let data_size: usize = 128 * 1024;
+    let data_size: usize = packet_size as usize * MAX_SYMBOLS_IN_BLOCK as usize;
     let data = gen_data(data_size);
 
     let encoder = match BlockEncoder::new(0, packet_size, data.clone(), None) {
@@ -102,4 +103,40 @@ fn test_block_decode_single_client() {
         Ok(recovered_data) => assert_eq!(arr_eq(&recovered_data, &data), true),
         Err(error) => panic!("Failed to decode data: {}", error),
     }
+}
+
+#[test]
+fn test_encode_decode_e2e() {
+    let packet_size: u16 = 512;
+    let data_size: usize = 123456;
+
+    let data = gen_data(data_size);
+
+    let mut plans = load_encoding_plans(".encoding_plan_cache/").unwrap();
+    let plan_keys: HashSet<u16> = plans.keys().copied().collect();
+
+    let encoder = match RaptorQEncoder::new(packet_size, &data, Some(&mut plans)) {
+        Ok(succ) => succ,
+        Err(error) => panic!("Failed to create encoder, error {}", error),
+    };
+
+    plans.retain(|k,_| !plan_keys.contains(k));
+    save_encoding_plans(".encoding_plan_cache/", &plans).unwrap();
+
+    let mut decoder = match RaptorQDecoder::new(encoder.get_block_info_vec()) {
+        Ok(succ) => succ,
+        Err(error) => panic!("Failed to create decoder, error {}", error),
+    };
+
+    let blocks_total = encoder.generate_encoded_blocks();
+
+    decoder.consume_blocks(blocks_total);
+    let result = decoder.decode_blocks();
+
+    let recovered_data = match result {
+        Ok(data) => data,
+        Err(error) => panic!("Failed to decode, error {}", error),
+    };
+
+    assert_eq!(data, recovered_data);
 }
